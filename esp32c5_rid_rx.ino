@@ -175,8 +175,12 @@ void setup() {
 
     // 控制天线
     pinMode(ant_switch_pin, OUTPUT); 
-    digitalWrite(ant_switch_pin, LOW);
-    Serial.println("已切换至板载天线 (LOW)");
+
+    //digitalWrite(ant_switch_pin, LOW);
+    //Serial.println("已切换至板载天线 (LOW)");
+
+    digitalWrite(ant_switch_pin, HIGH);
+    Serial.println("已切换至外接天线 (HIGH)");
 
     Serial.println("启动 ESP32-C5 无人机 RID 接收机...");
     // 将 WiFi 设置为 Station 模式，并断开连接，准备进入混杂模式
