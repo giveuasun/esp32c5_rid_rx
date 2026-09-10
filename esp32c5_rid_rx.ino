@@ -1,89 +1,109 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 
+#define DEBUG
+
 const int ant_switch_pin = 26; // IO26：拉低->板载天线 拉高->外部天线
 
 // 定义 OpenDroneID 的特定 OUI 特征 (根据具体协议版本可能微调)，OpenDroneID 是全球无人机行业通用的官方/国际标准格式
 const uint8_t ODID_OUI[] = {0xFA, 0x0B, 0xBC}; 
 
-typedef struct __attribute__((packed)) {
-    uint8_t  messageType;      // 0
-    uint8_t  protocolVersion;  // 1
-    uint8_t  drid;             // 2
-    uint8_t  status;           // 3
-    uint8_t  reserved1;        // 4
-    uint8_t  uasIdLen;         // 5
-    char     uasId[20];        // 6
-    uint8_t  reserved2[3];    // 26
-    uint8_t  lat[4];           // 27
-    uint8_t  lon[4];           // 31
-    uint8_t  height[2];        // 35
-    uint8_t  speed[4];         // 39
-    uint8_t  rest[32];         // 41~78
-} RidLocationMsg;
 
-int32_t readInt32LE(const uint8_t* d) {
-    return (int32_t)(d[0] | (d[1] << 8) | (d[2] << 16) | (d[3] << 24));
+typedef struct __attribute__((packed)) {
+    uint8_t  msg_num;      // 0
+    uint8_t  message_type;  // 1 
+    uint8_t single_msg_size; // 2
+    uint8_t num_messages; // 3
+    uint8_t messages_data1; // (4) 29 54 
+    uint8_t uk;
+    char uas_id[20];        // 6-25
+    uint8_t uk26;
+    uint8_t uk27;
+    uint8_t uk28;
+    uint8_t messages_data2; // 4 (29) 54 
+    uint8_t status; // 30
+    uint8_t direction;//31
+    uint8_t horizontal_speed;//32
+    uint8_t vertical_speed;//33
+    uint8_t latitude[4];//34-37
+    uint8_t longitude[4];//38-41
+    uint8_t baro_altitude[2];//42-43
+    uint8_t geo_altitude[2];//44-45
+    uint8_t height[2];//46-47
+    uint8_t reserv[6];//48-53
+    uint8_t messages_data3; // 4 29 (54) 
+    uint8_t ukk3[24];// 55-78
+} RidMsg;
+
+double readLatLon(const uint8_t* data) {
+	int32_t val = static_cast<int32_t>(readLE32(data));
+	return val * 1e-7;
 }
 
-int16_t readInt16LE(const uint8_t* d) {
-    return (int16_t)(d[0] | (d[1] << 8));
+uint32_t readLE32(const uint8_t* data) {
+	return (data[3] << 24) | (data[2] << 16) | (data[1] << 8) | data[0];
+}
+
+uint16_t readLE16(const uint8_t* data) {
+	return (data[1] << 8) | data[0];
 }
 
 // 协议解析函数入口，传入纯净的 RID 数据载荷和长度
 void parse_rid_protocol(uint8_t *payload, uint16_t length) {
+
+    #ifdef DEBUG
     Serial.printf("捕获到 %d 字节的无人机 RID 数据!\n", length);
-    // --- 打印原始 HEX 数据用于找对齐 ---
+    // 打印原始 HEX 数据用于对齐
     Serial.print("RAW Payload HEX: ");
     for(int i = 0; i < length; i++) {
         Serial.printf("%02X ", payload[i]);
     }
     Serial.println();
-    // ------------------------------------------
-if (length != 79) {
-        Serial.print(F("Bad len: "));
-        Serial.println(length);
+    #endif
+    if (length != 79) {
         return;
     }
 
+    const RidMsg* msg = (const RidMsg*)payload;
+
+    /*
+    uint8_t cal_tmp = msg->messages_data3;
+    uint8_t msg_type = (cal_tmp >> 4) & 0x0F;
     Serial.println(F("===== Drone RID ====="));
+    Serial.print(F("Msg Type: "));
+    Serial.print(msg_type, HEX);
+    switch(msg_type) {
+        case 0x00: Serial.print(F(" (Basic ID)")); break;
+        case 0x01: Serial.print(F(" (Location/Vector)")); break;
+        case 0x02: Serial.print(F(" (Authentication)")); break;
+        case 0x03: Serial.print(F(" (Self-ID)")); break;
+        case 0x04: Serial.print(F(" (System)")); break;
+        case 0x05: Serial.print(F(" (Operator ID)")); break;
+        default: Serial.print(F(" (Unknown)")); break;
+    }
+    Serial.println();
+    */
 
-    Serial.print(F("MsgType: 0x"));
-    Serial.println(payload[0], HEX);
+    double latitude = readLatLon(&(msg->latitude[0]));
+    double longitude = readLatLon(&(msg->longitude[0]));
+    uint16_t h = readLE16(&(msg->height[0]));
+    float h_f = static_cast<float>(h);
 
-    Serial.print(F("Status: "));
-    Serial.println(payload[3]);
+    Serial.print(F("Msg Number: 0x"));
+    Serial.println(msg->msg_num, HEX);
 
-    // UAS ID - 固定 20 字节
     Serial.print(F("UAS ID: "));
     for (uint8_t i = 0; i < 20; i++) {
-        if (payload[6 + i] >= 0x20 && payload[6 + i] < 0x7F)
-            Serial.print((char)payload[6 + i]);
+        Serial.print(msg->uas_id[i]);
     }
     Serial.println();
 
-    // 经纬度
-    int32_t latRaw = readInt32LE(&payload[27]);
-    int32_t lonRaw = readInt32LE(&payload[31]);
-
-    double lat = latRaw / 1e7;
-    double lon = lonRaw / 1e7;
-
-    Serial.print(F("Lat: "));
-    Serial.println(lat, 7);
-
-    Serial.print(F("Lon: "));
-    Serial.println(lon, 7);
-
-    // 高度（AGL，单位分米或米取决于 flag，通常分米）
-    int16_t height = readInt16LE(&payload[35]);
-    Serial.print(F("Height: "));
-    Serial.println(height);
-
-    // 速度（cm/s 或类似，取决于协议版本）
-    int32_t speed = readInt32LE(&payload[39]);
-    Serial.print(F("Speed(raw): "));
-    Serial.println(speed);
+    Serial.print(F("纬度："));
+    Serial.println(latitude);
+    Serial.print(F("经度："));
+    Serial.println(longitude);
+    Serial.print(F("高度："));
+    Serial.println(h_f);
 
     Serial.println(F("====================="));
 }
