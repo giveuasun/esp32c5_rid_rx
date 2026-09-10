@@ -6,21 +6,88 @@ const int ant_switch_pin = 26; // IO26：拉低->板载天线 拉高->外部天�
 // 定义 OpenDroneID 的特定 OUI 特征 (根据具体协议版本可能微调)，OpenDroneID 是全球无人机行业通用的官方/国际标准格式
 const uint8_t ODID_OUI[] = {0xFA, 0x0B, 0xBC}; 
 
+typedef struct __attribute__((packed)) {
+    uint8_t  messageType;      // 0
+    uint8_t  protocolVersion;  // 1
+    uint8_t  drid;             // 2
+    uint8_t  status;           // 3
+    uint8_t  reserved1;        // 4
+    uint8_t  uasIdLen;         // 5
+    char     uasId[20];        // 6
+    uint8_t  reserved2[3];    // 26
+    uint8_t  lat[4];           // 27
+    uint8_t  lon[4];           // 31
+    uint8_t  height[2];        // 35
+    uint8_t  speed[4];         // 39
+    uint8_t  rest[32];         // 41~78
+} RidLocationMsg;
+
+int32_t readInt32LE(const uint8_t* d) {
+    return (int32_t)(d[0] | (d[1] << 8) | (d[2] << 16) | (d[3] << 24));
+}
+
+int16_t readInt16LE(const uint8_t* d) {
+    return (int16_t)(d[0] | (d[1] << 8));
+}
+
 // 协议解析函数入口，传入纯净的 RID 数据载荷和长度
 void parse_rid_protocol(uint8_t *payload, uint16_t length) {
-    //Serial.println("已进入parse_rid_protocol");
     Serial.printf("捕获到 %d 字节的无人机 RID 数据!\n", length);
-    
+    // --- 打印原始 HEX 数据用于找对齐 ---
+    Serial.print("RAW Payload HEX: ");
+    for(int i = 0; i < length; i++) {
+        Serial.printf("%02X ", payload[i]);
+    }
+    Serial.println();
+    // ------------------------------------------
+if (length != 79) {
+        Serial.print(F("Bad len: "));
+        Serial.println(length);
+        return;
+    }
 
+    Serial.println(F("===== Drone RID ====="));
 
+    Serial.print(F("MsgType: 0x"));
+    Serial.println(payload[0], HEX);
 
-    /* 
-       例子：
-       if (payload[0] == 0x10) { // 假设 0x10 代表 Location Message
-           // bit-shifting 还原经纬度...
-       }
-    */
+    Serial.print(F("Status: "));
+    Serial.println(payload[3]);
+
+    // UAS ID - 固定 20 字节
+    Serial.print(F("UAS ID: "));
+    for (uint8_t i = 0; i < 20; i++) {
+        if (payload[6 + i] >= 0x20 && payload[6 + i] < 0x7F)
+            Serial.print((char)payload[6 + i]);
+    }
+    Serial.println();
+
+    // 经纬度
+    int32_t latRaw = readInt32LE(&payload[27]);
+    int32_t lonRaw = readInt32LE(&payload[31]);
+
+    double lat = latRaw / 1e7;
+    double lon = lonRaw / 1e7;
+
+    Serial.print(F("Lat: "));
+    Serial.println(lat, 7);
+
+    Serial.print(F("Lon: "));
+    Serial.println(lon, 7);
+
+    // 高度（AGL，单位分米或米取决于 flag，通常分米）
+    int16_t height = readInt16LE(&payload[35]);
+    Serial.print(F("Height: "));
+    Serial.println(height);
+
+    // 速度（cm/s 或类似，取决于协议版本）
+    int32_t speed = readInt32LE(&payload[39]);
+    Serial.print(F("Speed(raw): "));
+    Serial.println(speed);
+
+    Serial.println(F("====================="));
 }
+
 
 // 混杂模式底层回调函数，每抓到一个 WiFi 包都会触发
 // @param buf
