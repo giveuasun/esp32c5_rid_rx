@@ -87,7 +87,7 @@ void parse_rid_protocol(uint8_t *payload, uint16_t length) {
     double latitude = readLatLon(&(msg->latitude[0]));
     double longitude = readLatLon(&(msg->longitude[0]));
     uint16_t h = readLE16(&(msg->height[0]));
-    float h_f = static_cast<float>(h);
+    float height = h * 0.5f - 1000.0f;
 
     Serial.print(F("Msg Number: 0x"));
     Serial.println(msg->msg_num, HEX);
@@ -99,11 +99,11 @@ void parse_rid_protocol(uint8_t *payload, uint16_t length) {
     Serial.println();
 
     Serial.print(F("纬度："));
-    Serial.println(latitude);
+    Serial.println(latitude, 7);
     Serial.print(F("经度："));
-    Serial.println(longitude);
+    Serial.println(longitude, 7);
     Serial.print(F("高度："));
-    Serial.println(h_f);
+    Serial.println(height);
 
     Serial.println(F("====================="));
 }
